@@ -2,7 +2,7 @@
 <html lang="sv">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>Järla F2014 – Bygga upp spelet (interaktiv)</title>
 <style>
   :root{
@@ -34,6 +34,7 @@
   button:hover{ border-color:#cbd5e1 } .primary{ background:var(--accent); color:#fff; border-color:var(--accent) } .pill{ border-radius:999px }
   .toggle{ display:flex; gap:6px } .toggle button{ padding:6px 10px; font-weight:600; font-size:12px }
   .toggle button.active{ background:var(--accent-weak); border-color:var(--accent); color:#0a2a0e }
+  /* Canvas: vi låter JS sätta width/height; här styr vi bara den visuella bredden */
   #pitch{ width:100%; height:auto; background:var(--pitch); border-radius:10px; display:block; border:1px solid var(--line) }
   .phaseBanner{
     position:absolute; left:12px; bottom:12px; background:#fffffff0; border:1px solid var(--line);
@@ -49,6 +50,17 @@
   .legend{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
   .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; border:1px solid #0003; margin-right:6px }
   .dot.ball{ background:#fff } .dot.j{ background:var(--jarlacolor) } .dot.o{ background:var(--oppcolor) }
+
+  /* —— Responsiva förbättringar —— */
+  @media (max-width: 680px){
+    /* Lägg kontrollpanelen ovanför planen (inte överlagrad) */
+    .controlsBar{ position:static; box-shadow:none; }
+    .board{ padding-top:8px; }
+    /* Flykta fas-rutan lite så den inte krockar med tummen */
+    .phaseBanner{ left:8px; right:8px; bottom:8px; font-size:14px; padding:8px 10px; }
+    /* Mindre padding runt allt */
+    .wrap{ padding:12px; }
+  }
 </style>
 </head>
 <body>
@@ -124,6 +136,7 @@
     </div>
 
     <div class="phaseBanner" id="phaseBanner">Fas: –</div>
+    <!-- Viktigt: width/height sätts som "design size"; JS skalar för mobil -->
     <canvas id="pitch" width="980" height="580" aria-label="Fotbollsplan"></canvas>
   </div>
 
@@ -164,7 +177,25 @@
 
   /* ====== Canvas & UI ====== */
   const cvs = document.getElementById('pitch'), ctx = cvs.getContext('2d');
-  const W = cvs.width, H = cvs.height, M = 44;
+  // —— RESPONSIV SKALNING —— //
+  const DESIGN_W = 980, DESIGN_H = 580; // original koordinatsystem
+  function resizeCanvas(){
+    // CSS-bredd = behåll 100% av containerbredden
+    const cssW = Math.min(cvs.parentElement.clientWidth - 16, DESIGN_W); // liten marginal
+    const cssH = Math.round(cssW * (DESIGN_H / DESIGN_W));
+    const dpr = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1));
+    // Sätt faktiska pixlar för skarp text/linjer
+    cvs.style.width = cssW + 'px';
+    cvs.style.height = cssH + 'px';
+    cvs.width  = Math.round(cssW * dpr);
+    cvs.height = Math.round(cssH * dpr);
+    // Skala koordinatsystemet tillbaka till design size
+    const scale = (cvs.width / DESIGN_W);
+    ctx.setTransform(scale,0,0,scale,0,0);
+  }
+  window.addEventListener('resize', resizeCanvas, {passive:true});
+
+  const W = DESIGN_W, H = DESIGN_H, M = 44; // använd designmått i all logik
   const phaseBanner = document.getElementById('phaseBanner');
   const selA = document.getElementById('selA'), selB = document.getElementById('selB');
   const btnA = document.getElementById('btnA'), btnB = document.getElementById('btnB');
@@ -237,10 +268,9 @@
       ball.x = p.x + dx/d*off; ball.y = p.y + dy/d*off;
     } else if (ball.mode==='pass' && ball.pass){
       const P = ball.pass; P.t += dt*TIME_SCALE; let u = clamp(P.t/P.dur, 0, 1);
-      // Interception check (geometrisk): närmaste motståndare inom radie till passlinjen → bryt
       if (!P.safe){
         const inter = checkInterception(P.from, P.to);
-        if (inter && u >= inter.at){ // bryt vid angiven progress
+        if (inter && u >= inter.at){
           const o = getPlayer(inter.by); ball.x=o.x; ball.y=o.y; attachBall(inter.by); click(420,.05);
           G.justIntercepted = true; return;
         }
@@ -251,14 +281,12 @@
     ball.x = clamp(ball.x, M+ball.r, W-M-ball.r); ball.y = clamp(ball.y, M+ball.r, H-M-ball.r);
   }
 
-  // Interception: min dist från motståndare till passlinje < R → bryt
-  const INTERCEPT_R = 16; // hur nära en pass får gå
+  const INTERCEPT_R = 16;
   function checkInterception(A,B){
-    let best=null; const ops = Object.values(O);
+    let best=null;
     for (const [name,o] of Object.entries(O)){
       const d = pointToSegmentDist(o, A, B);
       if (d < INTERCEPT_R){
-        // progress där brytningen sker (för att visa att den händer "på vägen")
         const at = projectionT(o, A, B);
         if (at>0.1 && at<0.9){ best = {by:'o.'+name, at}; break; }
       }
@@ -276,10 +304,8 @@
     return Math.hypot(P.x-x, P.y-y);
   }
 
-  /* ====== Positioner (rätt spelavstånd & bredd) ====== */
+  /* ====== Positioner ====== */
   function basePositions(){
-    // Våra: GK i eget straffområde; back vänster/höger (bredd); mitt på mittlinjen;
-    // två forwards högt & brett på varsin sida.
     const j = {
       gk: P(M+36, H/2, 12,'j','gk', 0.09),
       dL: P(M+180, H/2-90, 12,'j','back-left', 0.10),
@@ -288,7 +314,6 @@
       fL: P(W/2+130, H/2-100,12,'j','fwd',     0.11),
       fR: P(W/2+130, H/2+100,12,'j','fwd',     0.11),
     };
-    // Motstånd: tre över mittlinjen, brett – en press, två täcker vägar mot våra forwards
     const o = {
       a: P(W/2+15, H/2,    12,'o','press', 0.085),
       b: P(W/2+40, H/2-80, 12,'o','cover', 0.085),
@@ -312,40 +337,33 @@
     let best=null, dmin=1e9; for(const p of Object.values(O)){ const d=Math.hypot(ball.x-p.x, ball.y-p.y); if(d<dmin){dmin=d;best=p;} }
     return best;
   }
+  function along(A,B,k){ return {x:A.x+(B.x-A.x)*k, y:A.y+(B.y-A.y)*k}; }
   function coverTargets(){
-    // täck linjer mot mitt & mot våra två forwards (bredd)
-    const targets=[J.mid,J.fL,J.fR];
-    // placera på 55% mot varje target från bollen, med liten sidoförskjutning
     const t1 = along(ball, J.fL, 0.55); t1.y += 18;
     const t2 = along(ball, J.fR, 0.55); t2.y -= 18;
     return [t1,t2];
   }
-  function along(A,B,k){ return {x:A.x+(B.x-A.x)*k, y:A.y+(B.y-A.y)*k}; }
   function updateOpponents(dt){
-    if (!G.playing) return; // viktigt: stilla tills spel startar
+    if (!G.playing) return;
     const presser = nearestOppToBall(), others = Object.values(O).filter(p=>p!==presser);
-    // press – stanna på avstånd
     const stand=28, vx=ball.x-presser.x, vy=ball.y-presser.y, L=Math.hypot(vx,vy)||1;
     presser.tx = ball.x - vx/L*stand; presser.ty = ball.y - vy/L*stand;
-    // täck – blockera pass till fL/fR
     const [t1,t2] = coverTargets();
     if(others[0]){ others[0].tx=t1.x; others[0].ty=t1.y; }
     if(others[1]){ others[1].tx=t2.x; others[1].ty=t2.y; }
     for (const p of Object.values(O)) moveTo(p, dt);
   }
 
-  /* ====== Lagrörelse (B: bredd & hjälprörelser) ====== */
+  /* ====== Lagrörelse (B) ====== */
   function teamSupport(mode){
-    if (mode!=='B') { // A: väldigt små justeringar
+    if (mode!=='B') {
       for (const p of Object.values(J)){ p.tx=p.x; p.ty=p.y; }
       return;
     }
-    // GK: stanna hemma (små sidled inom egen tredjedel), aldrig rakt fram
     if (ball.carrier!=='j.gk'){
       J.gk.tx = clamp(J.gk.x + (Math.random()*2-1)*2, M+30, M+60);
       J.gk.ty = clamp(J.gk.y + (Math.random()*2-1)*2, H/2-40, H/2+40);
     }
-    // Backar riktigt brett, mitt nära boll, ena forward droppar, andra håller högt
     const bx=ball.x, by=ball.y;
     J.dL.tx = M+180; J.dL.ty = H/2-100;
     J.dR.tx = M+180; J.dR.ty = H/2+100;
@@ -359,12 +377,10 @@
   function updateStats(){ statPass.textContent=G.passes; statTime.textContent=((performance.now()-G.possStart)/1000).toFixed(1); statOutcome.textContent=G.outcome; }
   function setScenarioInfo(s){ scTitle.textContent=s.title; scType.textContent=`Typ: Lag ${s.type}`; scDesc.textContent=s.desc; scSteps.innerHTML=''; s.steps.forEach(t=>{ const li=document.createElement('li'); li.textContent=t; scSteps.appendChild(li); }); }
 
-  // Phase: { name,dur,moves:[{id,to}],dribble:'id',pass:{from,toId|toPoint,dur,count,safe?}, turnover?, outcome? }
   function startScenario(s){
     resetPositions(); G.scenario=s; setScenarioInfo(s);
     G.playing=true; G.paused=false; G.phaseIdx=0; G.phaseTime=0; G.mode=s.type;
     phaseBanner.textContent='Fas: '+(s.phases[0]?.name||'1');
-    // visuell knapp-feedback
     btnA.classList.remove('primary'); btnB.classList.remove('primary');
     (s.type==='A' ? btnA : btnB).classList.add('primary'); setTimeout(()=>{ btnA.classList.remove('primary'); btnB.classList.remove('primary'); }, 800);
   }
@@ -377,7 +393,7 @@
       let to=null;
       if (ph.pass.toId){ const r=getPlayer(ph.pass.toId); to={x:r.tx,y:r.ty}; }
       else if (ph.pass.toPoint){ to=ph.pass.toPoint; }
-      startPass(ph.pass.from, to, ph.pass.dur||700, {safe:!!ph.pass.safe});
+      startPass(ph.pass.from, to, ph.pass.dur||700, {safe:!!(ph.pass.safe)});
     }
   }
   function addOppTransition(afterIndex){
@@ -392,7 +408,8 @@
   }
   function updateScenario(dt){
     if(!G.playing || G.paused || !G.scenario) return;
-    const s=G.scenario, ph=s.phases[G.phaseIdx]; if(!ph){ G.playing=false; G.outcome=s.outcome; updateStats(); phaseBanner.textContent='Klar: '+s.outcome; return; }
+    const s=G.scenario, ph=s.phases[G.phaseIdx];
+    if(!ph){ G.playing=false; G.outcome=s.outcome; updateStats(); phaseBanner.textContent='Klar: '+s.outcome; return; }
     if (G.phaseTime===0){ G.justIntercepted=false; applyPhase(ph); }
 
     teamSupport(G.mode);
@@ -413,10 +430,9 @@
   }
   function getPlayer(id){ const [t,n]=id.split('.'); return t==='j' ? J[n] : O[n]; }
 
-  /* ====== Scenarier ====== */
+  /* ====== Scenarier (oförändrade) ====== */
   function scenarios(){
     const B=basePositions(), j0=B.j; const near=(p,dx=0,dy=0)=>({x:p.x+dx,y:p.y+dy});
-    // A: brytningar + tydlig omställning
     const A1 = { id:'A1', type:'A', title:'Lag A #1 – Långboll från GK (bryts)',
       desc:'Få alternativ → långboll → motståndaren bryter → kort omställning.',
       outcome:'Bolltapp',
@@ -435,7 +451,6 @@
         { name:'GK → dC', dur:720, pass:{from:'j.gk', toId:'j.dL', dur:660, count:true} },
         { name:'Driv in i press (brytning)', dur:1100, dribble:'j.dL',
           moves:[ {id:'j.dL', to: near(j0.dL, +210, (j0.dL.y<H/2?-10:10))} ],
-          // “pass” används här endast för att trigga intercept-beräkning längs drivlinjen
           pass:{ from:'j.dL', toPoint:{x:j0.dL.x+210, y:j0.dL.y+(j0.dL.y<H/2?-10:10)}, dur:1000 }, turnover:true, outcome:'Bolltapp' }
       ]};
     const A3 = { id:'A3', type:'A', title:'Lag A #3 – Kant → tidig långboll (50/50 → tapp)',
@@ -446,8 +461,6 @@
         { name:'GK → kant', dur:720, pass:{ from:'j.gk', toId:'j.dR', dur:640, count:true } },
         { name:'Tidig långboll (50/50)', dur:980, pass:{ from:'j.dR', toPoint:{x:j0.fR.x, y:j0.fR.y}, dur:920, count:false }, turnover:true, outcome:'Bolltapp' }
       ]};
-
-    // B: säkra pass, tydliga öppningar
     const B1 = { id:'B1', type:'B', title:'Lag B #1 – Kant → mitt → dropp → tillbaka → djupled',
       desc:'Bredd → mitt → dropp → tillbaka → djupled. Täck flyttas och öppningarna syns.',
       outcome:'Skapat läge',
@@ -472,77 +485,4 @@
         { name:'mid → fR', dur:980, pass:{ from:'j.mid', toId:'j.fR', dur:900, count:true, safe:true } },
         { name:'Chans', dur:600, outcome:'Skapat läge' }
       ]};
-    const B3 = { id:'B3', type:'B', title:'Lag B #3 – Switch (byta kant)',
-      desc:'Flyttar täck, byter kant före avgörande.',
-      outcome:'Skapat läge',
-      steps:['1) GK → central.','2) Central → motsatt kant.','3) Kant → mitt.','4) Mitt → andra forward (switch).'],
-      phases:[
-        { name:'GK → dL', dur:820, pass:{ from:'j.gk', toId:'j.dL', dur:740, count:true, safe:true } },
-        { name:'dL → dR', dur:820, pass:{ from:'j.dL', toId:'j.dR', dur:740, count:true, safe:true }, moves:[{id:'j.mid',to:near(j0.mid,+18,0)}] },
-        { name:'dR → mid', dur:860, pass:{ from:'j.dR', toId:'j.mid', dur:800, count:true, safe:true } },
-        { name:'mid → fL (switch)', dur:1040, pass:{ from:'j.mid', toId:'j.fL', dur:960, count:true, safe:true } },
-        { name:'Chans', dur:600, outcome:'Skapat läge' }
-      ]};
-    const B4 = { id:'B4', type:'B', title:'Lag B #4 – Starta om via GK → central → djupled',
-      desc:'Starta om för bättre vinkel → mitt → djupled.',
-      outcome:'Skapat läge',
-      steps:['1) GK → kant.','2) Kant → GK (starta om).','3) GK → mitt.','4) Mitt → fL (dropp).','5) fL → fR (vänd snabbt).'],
-      phases:[
-        { name:'GK → dR', dur:820, pass:{ from:'j.gk', toId:'j.dR', dur:740, count:true, safe:true } },
-        { name:'dR → GK', dur:820, pass:{ from:'j.dR', toId:'j.gk', dur:740, count:true, safe:true } },
-        { name:'GK → mid', dur:900, pass:{ from:'j.gk', toId:'j.mid', dur:840, count:true, safe:true } },
-        { name:'mid → fL (dropp)', dur:920, pass:{ from:'j.mid', toId:'j.fL', dur:860, count:true, safe:true }, moves:[{id:'j.fL',to:near(j0.fL,-28,+10)}] },
-        { name:'fL → fR (djupled)', dur:1040, pass:{ from:'j.fL', toId:'j.fR', dur:960, count:true, safe:true } },
-        { name:'Chans', dur:600, outcome:'Skapat läge' }
-      ]};
-    const B5 = { id:'B5', type:'B', title:'Lag B #5 – Tredje man & diagonal',
-      desc:'Tredje man i fart → diagonal in bakom täck.',
-      outcome:'Skapat läge',
-      steps:['1) GK → central.','2) Central → mitt.','3) Mitt → central (tredje man).','4) Central → fL (diagonal).'],
-      phases:[
-        { name:'GK → dL', dur:840, pass:{ from:'j.gk', toId:'j.dL', dur:760, count:true, safe:true } },
-        { name:'dL → mid', dur:860, pass:{ from:'j.dL', toId:'j.mid', dur:800, count:true, safe:true } },
-        { name:'mid → dL (tredje man)', dur:900, pass:{ from:'j.mid', toId:'j.dL', dur:840, count:true, safe:true }, moves:[{id:'j.dL',to:near(j0.dL,+60,-8)}] },
-        { name:'dL → fL (diagonal)', dur:1040, pass:{ from:'j.dL', toId:'j.fL', dur:960, count:true, safe:true } },
-        { name:'Chans', dur:600, outcome:'Skapat läge' }
-      ]};
-    return { A:[A1,A2,A3], B:[B1,B2,B3,B4,B5] };
-  }
-  const SC = scenarios(); let currentScenario=null;
-
-  /* ====== Rendering ====== */
-  function draw(){
-    drawPitch();
-    if (ball.pass) drawArrow(ball.pass.from, ball.pass.to, ball.pass.safe);
-    else if (ball.lastArrow){ ctx.save(); ctx.globalAlpha=Math.max(0, ball.lastArrow.alpha*0.5); drawArrow(ball.lastArrow.from, ball.lastArrow.to, ball.lastArrow.safe); ctx.restore(); }
-    // Opponents
-    for (const p of Object.values(O)) drawDot(p, C.o, false);
-    // Järla – markera GK tydligt (ring + label)
-    for (const [k,p] of Object.entries(J)){
-      if (k==='gk'){ drawDot(p, C.j, true, 'GK'); } else { drawDot(p, C.j, false); }
-    }
-    drawBall();
-  }
-  function tick(now){
-    const dt = (now-(G.last||now)); G.last=now;
-    if (G.playing && !G.paused){ updateScenario(dt); } else { updateBall(dt); /* stilla tills start */ }
-    draw(); requestAnimationFrame(tick);
-  }
-
-  /* ====== UI ====== */
-  btnA.onclick = ()=>{ const id=selA.value; currentScenario=SC.A.find(s=>s.id===id); startScenario(currentScenario); };
-  btnB.onclick = ()=>{ const id=selB.value; currentScenario=SC.B.find(s=>s.id===id); startScenario(currentScenario); };
-  btnPause.onclick = ()=>{ if(!currentScenario) return; G.paused=!G.paused; btnPause.textContent = G.paused?'▶ Fortsätt':'⏸ Pausa'; };
-  btnNextPhase.onclick = ()=> nextPhase();
-  btnReset.onclick = ()=>{
-    currentScenario=null; resetPositions(); scTitle.textContent='Scenario'; scType.textContent='Typ: –';
-    scDesc.textContent='Välj och spela ett scenario ovan.'; scSteps.innerHTML=''; btnPause.textContent='⏸ Pausa';
-  };
-
-  /* ====== Init (stilla) ====== */
-  resetPositions();
-  requestAnimationFrame(tick);
-})();
-</script>
-</body>
-</html>
+    const B3 = { id:'B3', type:'B
